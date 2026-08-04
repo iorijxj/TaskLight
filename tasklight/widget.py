@@ -1,8 +1,10 @@
-"""置顶悬浮窗：横置红绿灯，图片背景，左键拖动，边缘等比缩放，右键退出。"""
+"""置顶悬浮窗：横置红绿灯，图片背景，左键拖动，边缘等比缩放。
+
+不提供退出入口 —— 退出只走托盘菜单，免得在灯上误点一下就关掉。
+"""
 from __future__ import annotations
 
 import tkinter as tk
-from collections.abc import Callable
 
 from . import assets, layered, store
 from .state import Light
@@ -33,9 +35,8 @@ EDGE_CURSORS = {
 
 
 class TrafficLightWidget:
-    def __init__(self, root: tk.Tk, on_exit: Callable[[], None]):
+    def __init__(self, root: tk.Tk):
         self._root = root
-        self._on_exit = on_exit
         self._frames = assets.build_frames()
         self._ratio = assets.aspect_ratio()
         self._light = Light.GREEN
@@ -80,12 +81,13 @@ class TrafficLightWidget:
         self._root.geometry(f"{self._width}x{self._height()}+{x}+{y}")
 
     def _bind_events(self) -> None:
+        """刻意不绑右键：悬浮窗只负责看和拖，退出只能走托盘菜单，
+        免得在灯上误点一下就把它关了。"""
         root = self._root
         root.bind("<Motion>", self._on_motion)
         root.bind("<Button-1>", self._on_press)
         root.bind("<B1-Motion>", self._on_drag_motion)
         root.bind("<ButtonRelease-1>", self._on_release)
-        root.bind("<Button-3>", lambda _e: self._on_exit())
 
     # ---------- 边缘检测与光标 ----------
 

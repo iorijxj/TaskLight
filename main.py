@@ -20,7 +20,7 @@ INSTANCE_MUTEX = "Global\\TaskLight.SingleInstance"
 class App:
     def __init__(self):
         self._root = tk.Tk()
-        self._widget = TrafficLightWidget(self._root, on_exit=self.quit)
+        self._widget = TrafficLightWidget(self._root)
         self._tray = TrayIcon(on_toggle=self._toggle_widget, on_exit=self._request_quit)
         self._visible = True
         self._scan_at = 0.0

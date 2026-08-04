@@ -1,4 +1,4 @@
-"""手动验证：每 2 秒切换一种灯态，右键退出。"""
+"""手动验证：每 2 秒切换一种灯态。关闭请用 Ctrl+C 或结束进程。"""
 import sys
 import tkinter as tk
 from pathlib import Path
@@ -13,7 +13,7 @@ SEQUENCE = [Light.GREEN, Light.ORANGE, Light.RED, Light.RED_BLINK]
 
 def main():
     root = tk.Tk()
-    widget = TrafficLightWidget(root, on_exit=root.destroy)
+    widget = TrafficLightWidget(root)
     index = {"value": 0}
 
     def cycle():
