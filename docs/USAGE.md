@@ -183,14 +183,16 @@ dir $env:USERPROFILE\.claude\tasklight\sessions
 
 ```
 ~\.claude\tasklight\
-├── config.json              闪烁设置
-├── window.json              悬浮窗位置与尺寸
-├── sessions\<session_id>.json   每个会话的状态快照
-├── agents\<session_id>\<agent_id>    未完成的子 Agent（空文件，存在即未完成）
-└── tasks\<session_id>\<task_id>      未完成的 Task
+├── config.json              闪烁设置（改过设置后才有）
+├── window.json              悬浮窗位置与尺寸（拖动或缩放后才有）
+├── sessions\<session_id>.json        每个会话的状态快照
+├── agents\<session_id>\<agent_id>    未完成的子 Agent（派过子 Agent 后才有）
+└── tasks\<session_id>\<task_id>      未完成的 Task（用过 TaskCreate 后才有）
 ```
 
-这些文件都可以随时删除，程序会重建。删 `config.json` 等于恢复默认设置，删 `window.json` 等于让窗口回到默认位置。
+**这些文件和目录都是按需创建的** —— 没用到对应功能就不存在，属正常现象。比如从没用过 `TaskCreate`，`tasks\` 目录就不会出现。
+
+都可以随时删除，程序会在需要时重建。删 `config.json` 等于恢复默认设置，删 `window.json` 等于让窗口回到默认位置。
 
 hook 配置写在 `~\.claude\settings.json`，备份在同目录的 `settings.json.bak`。
 
@@ -245,26 +247,33 @@ setx TASKLIGHT_DEBUG 1
 如果真卡住了，删掉槽位目录即可：
 
 ```powershell
-Remove-Item -Recurse $env:USERPROFILE\.claude\tasklight\sessions
+Remove-Item -Recurse -ErrorAction SilentlyContinue $env:USERPROFILE\.claude\tasklight\sessions
 ```
 
 ### 橙灯一直亮着不灭
 
 可能是某个子 Agent 的结束事件漏触发了，残留了标记文件。有两道兜底：会话结束（`SessionEnd`）时清理，或标记文件超过 4 小时自动失效。
 
-想立刻清掉：
+想立刻清掉（这两个目录可能只存在其中一个，`-ErrorAction SilentlyContinue` 用来忽略不存在的那个）：
 
 ```powershell
-Remove-Item -Recurse $env:USERPROFILE\.claude\tasklight\agents, $env:USERPROFILE\.claude\tasklight\tasks
+Remove-Item -Recurse -ErrorAction SilentlyContinue `
+  $env:USERPROFILE\.claude\tasklight\agents, $env:USERPROFILE\.claude\tasklight\tasks
 ```
 
 ### 双击 start.cmd 弹窗说「已在运行」
 
-说明已经有一个实例了。如果找不到它的窗口和托盘图标，可能是僵尸进程：
+说明已经有一个实例了。先试试托盘图标（可能折叠在任务栏溢出区里）。如果确实找不到，强制结束它：
 
 ```powershell
-Get-Process pythonw | Where-Object { $_.CommandLine -like '*main.py*' } | Stop-Process
+Get-CimInstance Win32_Process |
+  Where-Object { $_.Name -eq 'pythonw.exe' -and $_.CommandLine -like '*main.py*' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId }
 ```
+
+用 `Get-CimInstance` 而不是 `Get-Process`，是因为后者的 `CommandLine` 属性只有 PowerShell 7 才有，在 Windows PowerShell 5.1 上会静默匹配不到任何进程。
+
+**注意这是强制结束，会留下僵尸托盘图标**（鼠标划过即消失）。能用托盘菜单退出就别用这个。
 
 ### 多个用户同时登录（RDP / 快速用户切换）
 
