@@ -4,7 +4,7 @@ from __future__ import annotations
 import tkinter as tk
 from collections.abc import Callable
 
-from . import assets, layered
+from . import assets, layered, store
 from .state import Light
 
 DEFAULT_WIDTH = 340
@@ -50,7 +50,7 @@ class TrafficLightWidget:
     def _build(self) -> None:
         self._root.overrideredirect(True)
         self._root.attributes("-topmost", True)
-        self._place_at_right_edge()
+        self._place_initial()
         self._root.update_idletasks()
         self._hwnd = layered.resolve_hwnd(self._root.winfo_id())
         layered.enable(self._hwnd)
@@ -60,10 +60,21 @@ class TrafficLightWidget:
     def _height(self) -> int:
         return round(self._width / self._ratio)
 
-    def _place_at_right_edge(self) -> None:
-        x = self._root.winfo_screenwidth() - self._width - MARGIN_RIGHT
-        y = (self._root.winfo_screenheight() - self._height()) // 2
+    def _place_initial(self) -> None:
+        screen = (self._root.winfo_screenwidth(), self._root.winfo_screenheight())
+        saved = store.load_window(store.DEFAULT_ROOT, screen)
+        if saved:
+            self._width = max(MIN_WIDTH, min(MAX_WIDTH, saved["width"]))
+            self._apply_geometry(saved["x"], saved["y"])
+            return
+        x = screen[0] - self._width - MARGIN_RIGHT
+        y = (screen[1] - self._height()) // 2
         self._apply_geometry(x, y)
+
+    def _remember_geometry(self) -> None:
+        store.save_window(
+            store.DEFAULT_ROOT, self._root.winfo_x(), self._root.winfo_y(), self._width
+        )
 
     def _apply_geometry(self, x: int, y: int) -> None:
         self._root.geometry(f"{self._width}x{self._height()}+{x}+{y}")
@@ -137,6 +148,8 @@ class TrafficLightWidget:
         return x, y
 
     def _on_release(self, _event) -> None:
+        if self._drag:
+            self._remember_geometry()
         self._drag = None
 
     # ---------- 渲染 ----------

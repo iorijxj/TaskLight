@@ -29,6 +29,32 @@ def sanitize_id(raw) -> str:
     return cleaned or "unknown"
 
 
+WINDOW_FILE = "window.json"
+
+
+def save_window(root: Path, x: int, y: int, width: int) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / WINDOW_FILE
+    tmp = path.with_name(f"{WINDOW_FILE}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps({"x": x, "y": y, "width": width}), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def load_window(root: Path, screen: tuple[int, int]) -> dict | None:
+    """读回上次的位置与宽度。落在屏幕外或数据不合法时返回 None，由调用方用默认值。"""
+    data = _load_json(root / WINDOW_FILE)
+    if not data:
+        return None
+    try:
+        x, y, width = int(data["x"]), int(data["y"]), int(data["width"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    screen_w, screen_h = screen
+    if not (0 <= x < screen_w and 0 <= y < screen_h):
+        return None
+    return {"x": x, "y": y, "width": width}
+
+
 def _sessions_dir(root: Path) -> Path:
     return root / "sessions"
 

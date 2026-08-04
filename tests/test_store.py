@@ -101,6 +101,46 @@ def test_槽位文件写的是合法json(tmp_path):
     assert json.loads(raw)["state"] == SESSION_BUSY
 
 
+SCREEN = (2048, 1152)
+
+
+def test_窗口几何往返(tmp_path):
+    store.save_window(tmp_path, 100, 200, 420)
+    assert store.load_window(tmp_path, SCREEN) == {"x": 100, "y": 200, "width": 420}
+
+
+def test_没存过时返回None(tmp_path):
+    assert store.load_window(tmp_path, SCREEN) is None
+
+
+def test_损坏的窗口配置返回None(tmp_path):
+    (tmp_path / store.WINDOW_FILE).write_text("{ 坏的", encoding="utf-8")
+    assert store.load_window(tmp_path, SCREEN) is None
+
+
+def test_缺字段的窗口配置返回None(tmp_path):
+    (tmp_path / store.WINDOW_FILE).write_text('{"x": 1}', encoding="utf-8")
+    assert store.load_window(tmp_path, SCREEN) is None
+
+
+def test_屏幕外的位置被拒绝(tmp_path):
+    """换了显示器或改了分辨率后，旧位置可能落在屏幕外，得回退默认。"""
+    store.save_window(tmp_path, 5000, 200, 420)
+    assert store.load_window(tmp_path, SCREEN) is None
+
+
+def test_负坐标被拒绝(tmp_path):
+    store.save_window(tmp_path, -50, 200, 420)
+    assert store.load_window(tmp_path, SCREEN) is None
+
+
+def test_窗口配置覆写而非追加(tmp_path):
+    store.save_window(tmp_path, 100, 200, 420)
+    store.save_window(tmp_path, 300, 400, 500)
+    assert store.load_window(tmp_path, SCREEN) == {"x": 300, "y": 400, "width": 500}
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
 def test_不残留临时文件(tmp_path):
     store.write_slot(tmp_path, "sess-1", state=SESSION_BUSY)
     assert list((tmp_path / "sessions").glob("*.tmp")) == []
