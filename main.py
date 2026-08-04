@@ -4,14 +4,17 @@ from __future__ import annotations
 import time
 import tkinter as tk
 
+import sys
+
 from tasklight import store
 from tasklight.state import resolve, summarize
 from tasklight.tray import TrayIcon
 from tasklight.widget import BLINK_MS, TrafficLightWidget
-from tasklight.winproc import any_claude_alive, snapshot
+from tasklight.winproc import any_claude_alive, claim_single_instance, snapshot
 
 TICK_MS = 400
 SCAN_INTERVAL = 2.0
+INSTANCE_MUTEX = "Global\\TaskLight.SingleInstance"
 
 
 class App:
@@ -72,5 +75,18 @@ class App:
         self._root.destroy()
 
 
-if __name__ == "__main__":
+def main() -> int:
+    if not claim_single_instance(INSTANCE_MUTEX):
+        # 走 pythonw 启动时没有控制台，print 看不见，必须弹窗告知
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(
+            0, "TaskLight 已在运行。\n托盘图标右键可退出现有实例。", "TaskLight", 0x40
+        )
+        return 1
     App().run()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

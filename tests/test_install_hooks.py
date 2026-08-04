@@ -1,13 +1,28 @@
 import json
+import sys
+from pathlib import Path
 
 from install_hooks import HOOK_ENTRIES, build_command, install, merge_hooks
 
-COMMAND = 'python -S "E:/Github/TaskLight/hooks/tasklight_hook.py"'
+COMMAND = build_command(Path("E:/Github/TaskLight/hooks/tasklight_hook.py"))
 
 
 def test_命令行带S标志跳过site扫描(tmp_path):
+    assert " -S " in build_command(tmp_path / "hooks" / "tasklight_hook.py")
+
+
+def test_必须用解释器绝对路径而非裸python(tmp_path):
+    """裸 `python` 会被 cmd.exe 按「当前目录优先」解析，而当前目录是用户打开的
+    项目 —— 恶意仓库放个 python.exe 就能在 SessionStart 时拿到代码执行。"""
     command = build_command(tmp_path / "hooks" / "tasklight_hook.py")
-    assert command.startswith("python -S ")
+    assert not command.startswith("python")
+    assert Path(sys.executable).as_posix() in command
+
+
+def test_解释器路径被引号包裹(tmp_path):
+    """Python 常装在 C:\\Program Files 之类含空格的路径下。"""
+    command = build_command(tmp_path / "hooks" / "tasklight_hook.py")
+    assert command.startswith('"')
 
 
 def test_空配置时装入全部事件():
@@ -75,6 +90,45 @@ def test_安装后配置仍是合法json(tmp_path):
     install(settings, tmp_path / "hooks" / "tasklight_hook.py")
     data = json.loads(settings.read_text(encoding="utf-8"))
     assert "SessionStart" in data["hooks"]
+
+
+def test_升级时清掉命令已变的旧条目(tmp_path):
+    """解释器路径变过一次（裸 python → 绝对路径）。若按完整命令匹配，
+    旧条目清不掉，会新旧并存、hook 跑两遍，安全修复也就白做了。"""
+    settings = tmp_path / "settings.json"
+    hook = tmp_path / "hooks" / "tasklight_hook.py"
+    legacy = f'python -S "{hook.as_posix()}"'
+    settings.write_text(
+        json.dumps({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": legacy}]}]}}),
+        encoding="utf-8",
+    )
+    install(settings, hook)
+
+    data = json.loads(settings.read_text(encoding="utf-8"))
+    commands = [h["command"] for e in data["hooks"]["Stop"] for h in e["hooks"]]
+    assert legacy not in commands
+    assert len(commands) == 1
+
+
+def test_卸载能认出命令已变的旧条目(tmp_path):
+    from install_hooks import uninstall
+
+    settings = tmp_path / "settings.json"
+    hook = tmp_path / "hooks" / "tasklight_hook.py"
+    settings.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "Stop": [
+                        {"hooks": [{"type": "command", "command": f'python -S "{hook.as_posix()}"'}]}
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert uninstall(settings, hook) is True
+    assert json.loads(settings.read_text(encoding="utf-8"))["hooks"] == {}
 
 
 def test_卸载移除自身条目但保留他人(tmp_path):

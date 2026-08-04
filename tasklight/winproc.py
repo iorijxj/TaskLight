@@ -62,7 +62,30 @@ def _walk_snapshot(kernel32, handle) -> dict[int, ProcRow]:
 
 
 CLAUDE_EXE = "claude.exe"
+ERROR_ALREADY_EXISTS = 183
+_instance_handle = None
 
 
 def any_claude_alive(table: dict[int, ProcRow]) -> bool:
     return any(row.name == CLAUDE_EXE for row in table.values())
+
+
+def claim_single_instance(name: str) -> bool:
+    """用命名 Mutex 占位，已有实例在跑时返回 False。
+
+    句柄存在模块级变量里不能丢 —— 一旦被 GC 回收，Mutex 就释放了，
+    单实例保护随之失效。进程退出时由系统自动释放。
+    """
+    global _instance_handle
+    try:
+        kernel32 = ctypes.windll.kernel32
+    except AttributeError:
+        return True
+    handle = kernel32.CreateMutexW(None, True, name)
+    if not handle:
+        return True
+    if kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+        kernel32.CloseHandle(handle)
+        return False
+    _instance_handle = handle
+    return True

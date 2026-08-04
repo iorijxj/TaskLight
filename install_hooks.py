@@ -31,12 +31,16 @@ HOOK_ENTRIES = {
 
 
 def build_command(hook_path: Path) -> str:
-    """-S 跳过 site-packages 扫描，省约 17ms/次。
+    """用解释器绝对路径，绝不能写成裸 `python`。
 
-    hook 只用标准库并自行 sys.path.insert 项目根，因此不依赖 site —— 代价是
-    hook 侧永远不能引入第三方库。
+    hook 由 cmd.exe 执行，而其可执行文件搜索顺序是「当前目录 → 系统目录 → PATH」，
+    当前目录正是用户打开的那个项目 —— 一个不受信任的位置。若写裸 `python`，任何
+    在仓库根放了 python.exe 的恶意项目，都会在 SessionStart 时立刻拿到代码执行。
+
+    -S 跳过 site-packages 扫描，省约 17ms/次；hook 只用标准库并自行
+    sys.path.insert 项目根，因此不依赖 site —— 代价是 hook 侧永远不能引入第三方库。
     """
-    return f'python -S "{hook_path.as_posix()}"'
+    return f'"{Path(sys.executable).as_posix()}" -S "{hook_path.as_posix()}"'
 
 
 def _hook_block(command: str) -> dict:
@@ -51,6 +55,16 @@ def _already_present(entries: list, command: str) -> bool:
     )
 
 
+def _points_at(hook: dict, hook_path: Path) -> bool:
+    """按脚本路径而非完整命令来认领条目。
+
+    命令串里的解释器路径会随安装环境变化（也确实变过一次：裸 python 改成
+    绝对路径），只有脚本路径是稳定标识。按完整命令匹配会导致升级时旧条目
+    清不掉，新旧并存、hook 跑两遍。
+    """
+    return hook_path.as_posix() in hook.get("command", "")
+
+
 def merge_hooks(existing: dict, entries: dict, command: str) -> dict:
     merged = copy.deepcopy(existing)
     for event, specs in entries.items():
@@ -62,12 +76,12 @@ def merge_hooks(existing: dict, entries: dict, command: str) -> dict:
     return merged
 
 
-def strip_hooks(existing: dict, command: str) -> dict:
+def strip_hooks(existing: dict, hook_path: Path) -> dict:
     stripped = {}
     for event, entries in copy.deepcopy(existing).items():
         kept = [
             e for e in entries
-            if not any(h.get("command") == command for h in e.get("hooks", []))
+            if not any(_points_at(h, hook_path) for h in e.get("hooks", []))
         ]
         if kept:
             stripped[event] = kept
@@ -95,15 +109,16 @@ def _apply(settings_path: Path, new_hooks: dict) -> bool:
 
 
 def install(settings_path: Path, hook_path: Path) -> bool:
-    command = build_command(hook_path)
+    """先清掉指向本脚本的旧条目再装新的，这样升级不会留下重复。"""
     existing = _load(settings_path).get("hooks", {})
-    return _apply(settings_path, merge_hooks(existing, HOOK_ENTRIES, command))
+    cleaned = strip_hooks(existing, hook_path)
+    merged = merge_hooks(cleaned, HOOK_ENTRIES, build_command(hook_path))
+    return _apply(settings_path, merged)
 
 
 def uninstall(settings_path: Path, hook_path: Path) -> bool:
-    command = build_command(hook_path)
     existing = _load(settings_path).get("hooks", {})
-    return _apply(settings_path, strip_hooks(existing, command))
+    return _apply(settings_path, strip_hooks(existing, hook_path))
 
 
 def main() -> int:

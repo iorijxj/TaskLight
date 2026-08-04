@@ -35,7 +35,8 @@ class TrayIcon:
             pystray.MenuItem("退出", lambda _i, _item: on_exit()),
         )
         self._icon = pystray.Icon("tasklight", _make_icon(Light.GREEN), "TaskLight", menu)
-        self._current: tuple[Light, str] | None = None
+        self._light: Light | None = None
+        self._tooltip: str | None = None
 
     def start(self) -> None:
         self._icon.run_detached()
@@ -44,8 +45,11 @@ class TrayIcon:
         self._icon.stop()
 
     def update(self, light: Light, tooltip: str) -> None:
-        if self._current == (light, tooltip):
-            return
-        self._current = (light, tooltip)
-        self._icon.icon = _make_icon(light)
-        self._icon.title = tooltip
+        """图标与 tooltip 分开判断：tooltip 里带会话数，变得比灯色勤得多，
+        没必要为它重建图标。先赋值后记状态，赋值失败时下一轮会自动重试。"""
+        if light is not self._light:
+            self._icon.icon = _make_icon(light)
+            self._light = light
+        if tooltip != self._tooltip:
+            self._icon.title = tooltip
+            self._tooltip = tooltip
