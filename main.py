@@ -1,15 +1,16 @@
 """TaskLight 主程序。手动启动，托盘右键退出。"""
 from __future__ import annotations
 
+import sys
 import time
 import tkinter as tk
 
-import sys
-
+from tasklight import config as config_module
 from tasklight import store
+from tasklight.settings_window import SettingsWindow
 from tasklight.state import resolve, summarize
 from tasklight.tray import TrayIcon
-from tasklight.widget import BLINK_MS, TrafficLightWidget
+from tasklight.widget import BLINK_TICK_MS, TrafficLightWidget
 from tasklight.winproc import any_claude_alive, claim_single_instance, snapshot
 
 TICK_MS = 400
@@ -20,11 +21,19 @@ INSTANCE_MUTEX = "Global\\TaskLight.SingleInstance"
 class App:
     def __init__(self):
         self._root = tk.Tk()
-        self._widget = TrafficLightWidget(self._root)
-        self._tray = TrayIcon(on_toggle=self._toggle_widget, on_exit=self._request_quit)
+        self._root.withdraw()
+        self._config = config_module.load(store.DEFAULT_ROOT)
+        self._window = tk.Toplevel(self._root)
+        self._widget = TrafficLightWidget(self._window, self._config)
+        self._settings = SettingsWindow(self._root, self._config, self._apply_config)
+        self._tray = TrayIcon(
+            on_toggle=self._toggle_widget,
+            on_settings=self._open_settings,
+            on_exit=self._request_quit,
+        )
         self._visible = True
         self._scan_at = 0.0
-        self._root.protocol("WM_DELETE_WINDOW", self.quit)
+        self._window.protocol("WM_DELETE_WINDOW", self.quit)
 
     def run(self) -> None:
         self._tray.start()
@@ -58,7 +67,9 @@ class App:
 
     def _blink(self) -> None:
         self._widget.tick_blink()
-        self._root.after(BLINK_MS, self._blink)
+        self._root.after(BLINK_TICK_MS, self._blink)
+
+    # ---------- 托盘回调：都转回主线程再碰 tkinter ----------
 
     def _toggle_widget(self) -> None:
         self._root.after(0, self._apply_toggle)
@@ -67,8 +78,16 @@ class App:
         self._visible = not self._visible
         self._widget.show() if self._visible else self._widget.hide()
 
+    def _open_settings(self) -> None:
+        self._root.after(0, lambda: self._settings.open(self._config))
+
     def _request_quit(self) -> None:
         self._root.after(0, self.quit)
+
+    def _apply_config(self, config) -> None:
+        self._config = config
+        self._widget.set_config(config)
+        config_module.save(store.DEFAULT_ROOT, config)
 
     def quit(self) -> None:
         self._tray.stop()

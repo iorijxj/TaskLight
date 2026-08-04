@@ -6,14 +6,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tasklight.state import Light
-from tasklight.widget import BLINK_MS, TrafficLightWidget
+from tasklight.config import Config
+from tasklight.widget import BLINK_TICK_MS, TrafficLightWidget
 
-SEQUENCE = [Light.GREEN, Light.ORANGE, Light.RED, Light.RED_BLINK]
+SEQUENCE = [Light.IDLE, Light.BACKGROUND, Light.BUSY, Light.WAITING]
 
 
 def main():
     root = tk.Tk()
-    widget = TrafficLightWidget(root)
+    widget = TrafficLightWidget(root, Config())
     index = {"value": 0}
 
     def cycle():
@@ -23,7 +24,7 @@ def main():
 
     def blink():
         widget.tick_blink()
-        root.after(BLINK_MS, blink)
+        root.after(BLINK_TICK_MS, blink)
 
     cycle()
     blink()

@@ -11,10 +11,10 @@ from .state import Light
 ICON_SIZE = 64
 DOT_INSET = 6
 ICON_COLORS = {
-    Light.RED_BLINK: "#ff2a2a",
-    Light.RED: "#ff2a2a",
-    Light.ORANGE: "#ff9500",
-    Light.GREEN: "#22c55e",
+    Light.WAITING: "#ff2a2a",
+    Light.BUSY: "#ff2a2a",
+    Light.BACKGROUND: "#ff9500",
+    Light.IDLE: "#22c55e",
 }
 
 
@@ -29,12 +29,19 @@ def _make_icon(light: Light) -> Image.Image:
 
 
 class TrayIcon:
-    def __init__(self, on_toggle: Callable[[], None], on_exit: Callable[[], None]):
+    def __init__(
+        self,
+        on_toggle: Callable[[], None],
+        on_settings: Callable[[], None],
+        on_exit: Callable[[], None],
+    ):
         menu = pystray.Menu(
             pystray.MenuItem("显示/隐藏悬浮窗", lambda _i, _item: on_toggle(), default=True),
+            pystray.MenuItem("设置", lambda _i, _item: on_settings()),
+            pystray.Menu.SEPARATOR,
             pystray.MenuItem("退出", lambda _i, _item: on_exit()),
         )
-        self._icon = pystray.Icon("tasklight", _make_icon(Light.GREEN), "TaskLight", menu)
+        self._icon = pystray.Icon("tasklight", _make_icon(Light.IDLE), "TaskLight", menu)
         self._light: Light | None = None
         self._tooltip: str | None = None
 

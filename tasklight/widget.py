@@ -4,23 +4,26 @@
 """
 from __future__ import annotations
 
+import time
 import tkinter as tk
 
 from . import assets, layered, store
+from .config import Config
 from .state import Light
 
 DEFAULT_WIDTH = 340
 MIN_WIDTH = 180
 MAX_WIDTH = assets.BASE_WIDTH
 EDGE = 8
-BLINK_MS = 500
+# 闪烁由时间戳驱动，这只是采样粒度：要支持 250ms 的快闪就得比它细得多
+BLINK_TICK_MS = 50
 MARGIN_RIGHT = 24
 
 LIGHT_TO_FRAME = {
-    Light.RED_BLINK: "red",
-    Light.RED: "red",
-    Light.ORANGE: "orange",
-    Light.GREEN: "green",
+    Light.WAITING: assets.FRAME_RED_ORANGE,
+    Light.BUSY: assets.FRAME_RED,
+    Light.BACKGROUND: assets.FRAME_ORANGE,
+    Light.IDLE: assets.FRAME_GREEN,
 }
 EDGE_CURSORS = {
     "e": "sb_h_double_arrow",
@@ -35,12 +38,14 @@ EDGE_CURSORS = {
 
 
 class TrafficLightWidget:
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root: tk.Tk | tk.Toplevel, config: Config):
         self._root = root
+        self._config = config
         self._frames = assets.build_frames()
         self._ratio = assets.aspect_ratio()
-        self._light = Light.GREEN
-        self._blink_on = True
+        self._light = Light.IDLE
+        self._lit = True
+        self._last_flip = 0.0
         self._width = DEFAULT_WIDTH
         self._drag: dict | None = None
         self._hwnd = 0
@@ -56,7 +61,7 @@ class TrafficLightWidget:
         self._hwnd = layered.resolve_hwnd(self._root.winfo_id())
         layered.enable(self._hwnd)
         self._bind_events()
-        self.render(Light.GREEN)
+        self._paint()
 
     def _height(self) -> int:
         return round(self._width / self._ratio)
@@ -157,20 +162,52 @@ class TrafficLightWidget:
     # ---------- 渲染 ----------
 
     def render(self, light: Light) -> None:
+        """灯色没变就什么都不做 —— 闪烁由 tick_blink 驱动，避免每轮白重绘。"""
+        if light is self._light:
+            return
         self._light = light
+        self._lit = True
+        self._last_flip = time.monotonic()
         self._paint()
 
-    def tick_blink(self) -> None:
-        if self._light is not Light.RED_BLINK:
+    def set_config(self, config: Config) -> None:
+        self._config = config
+        self._lit = True
+        self._last_flip = time.monotonic()
+        self._paint()
+
+    def blink_interval(self) -> float | None:
+        """当前灯态的闪烁间隔（秒）；None 表示常亮。
+
+        等待确认永远闪，且用更快的节奏 —— 它是唯一「不回去就一直卡着」的状态，
+        不该被用户关掉。
+        """
+        if self._light is Light.WAITING:
+            return self._config.blink_fast_ms / 1000
+        if self._light is Light.BUSY and self._config.blink_busy:
+            return self._config.blink_normal_ms / 1000
+        if self._light is Light.BACKGROUND and self._config.blink_background:
+            return self._config.blink_normal_ms / 1000
+        return None
+
+    def tick_blink(self, now: float | None = None) -> None:
+        now = time.monotonic() if now is None else now
+        interval = self.blink_interval()
+        if interval is None:
+            if not self._lit:
+                self._lit = True
+                self._paint()
             return
-        self._blink_on = not self._blink_on
+        if now - self._last_flip < interval:
+            return
+        self._last_flip = now
+        self._lit = not self._lit
         self._paint()
 
     def _paint(self) -> None:
         if not self._hwnd:
             return
-        lit = self._blink_on or self._light is not Light.RED_BLINK
-        name = LIGHT_TO_FRAME[self._light] if lit else assets.DARK_FRAME
+        name = LIGHT_TO_FRAME[self._light] if self._lit else assets.FRAME_DARK
         frame = self._frames[name].resize((self._width, self._height()))
         layered.paint(self._hwnd, frame)
 

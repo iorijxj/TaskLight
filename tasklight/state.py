@@ -10,17 +10,19 @@ SESSION_WAITING = "waiting"
 
 
 class Light(Enum):
-    RED_BLINK = "red_blink"
-    RED = "red"
-    ORANGE = "orange"
-    GREEN = "green"
+    """按语义命名而非按颜色 —— 颜色和闪不闪都属于表现层，由 widget 决定。"""
+
+    WAITING = "waiting"
+    BUSY = "busy"
+    BACKGROUND = "background"
+    IDLE = "idle"
 
 
 LIGHT_LABELS = {
-    Light.RED_BLINK: "等待确认",
-    Light.RED: "忙碌",
-    Light.ORANGE: "后台运行",
-    Light.GREEN: "待机",
+    Light.WAITING: "等待确认",
+    Light.BUSY: "忙碌",
+    Light.BACKGROUND: "后台运行",
+    Light.IDLE: "待机",
 }
 
 
@@ -41,12 +43,12 @@ class Slot:
 
 def resolve(slots: list[Slot]) -> Light:
     if any(s.state == SESSION_WAITING for s in slots):
-        return Light.RED_BLINK
+        return Light.WAITING
     if any(s.state == SESSION_BUSY for s in slots):
-        return Light.RED
+        return Light.BUSY
     if any(s.background_total for s in slots):
-        return Light.ORANGE
-    return Light.GREEN
+        return Light.BACKGROUND
+    return Light.IDLE
 
 
 def summarize(slots: list[Slot], light: Light) -> str:
