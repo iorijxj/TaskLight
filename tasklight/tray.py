@@ -47,6 +47,10 @@ class TrayIcon:
     def update(self, light: Light, tooltip: str) -> None:
         """图标与 tooltip 分开判断：tooltip 里带会话数，变得比灯色勤得多，
         没必要为它重建图标。先赋值后记状态，赋值失败时下一轮会自动重试。"""
+        if not self._icon.visible:
+            # run_detached() 要 0.05~0.5s 才就绪，这期间 pystray 的 icon setter
+            # 会静默跳过刷新。若此时就记下状态，托盘会永远定格在初始图标。
+            return
         if light is not self._light:
             self._icon.icon = _make_icon(light)
             self._light = light
