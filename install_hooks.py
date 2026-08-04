@@ -27,7 +27,6 @@ HOOK_ENTRIES = {
     "TaskCompleted": [{}],
     "SessionEnd": [{}],
     "Notification": [{"matcher": "permission_prompt"}],
-    "PostToolUse": [{"matcher": "Bash"}],
 }
 
 

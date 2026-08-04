@@ -5,18 +5,16 @@ from tasklight.state import (
     SESSION_IDLE,
     SESSION_WAITING,
     resolve,
-    resolve_without_probe,
     summarize,
 )
 
 
-def slot(state=SESSION_IDLE, agents=0, tasks=0, bg_since=None):
+def slot(state=SESSION_IDLE, agents=0, tasks=0, bg=0):
     return Slot(
         session_id="s1",
         state=state,
         cwd="E:\\proj",
-        bg_since=bg_since,
-        claude_pid=None,
+        bg_count=bg,
         updated_at=0.0,
         pending_agents=agents,
         pending_tasks=tasks,
@@ -24,47 +22,54 @@ def slot(state=SESSION_IDLE, agents=0, tasks=0, bg_since=None):
 
 
 def test_waiting_压过_busy():
-    slots = [slot(SESSION_BUSY), slot(SESSION_WAITING)]
-    assert resolve_without_probe(slots) is Light.RED_BLINK
+    assert resolve([slot(SESSION_BUSY), slot(SESSION_WAITING)]) is Light.RED_BLINK
 
 
 def test_busy_压过_未完成子agent():
-    slots = [slot(SESSION_IDLE, agents=3), slot(SESSION_BUSY)]
-    assert resolve_without_probe(slots) is Light.RED
+    assert resolve([slot(SESSION_IDLE, agents=3), slot(SESSION_BUSY)]) is Light.RED
+
+
+def test_busy_压过_后台任务():
+    assert resolve([slot(SESSION_IDLE, bg=2), slot(SESSION_BUSY)]) is Light.RED
 
 
 def test_前台全停但有未完成子agent时为橙():
-    assert resolve_without_probe([slot(SESSION_IDLE, agents=1)]) is Light.ORANGE
+    assert resolve([slot(SESSION_IDLE, agents=1)]) is Light.ORANGE
 
 
 def test_前台全停但有未完成task时为橙():
-    assert resolve_without_probe([slot(SESSION_IDLE, tasks=1)]) is Light.ORANGE
+    assert resolve([slot(SESSION_IDLE, tasks=1)]) is Light.ORANGE
 
 
-def test_全部空闲时需要探测才能定夺():
-    assert resolve_without_probe([slot(SESSION_IDLE)]) is None
+def test_前台全停但有后台命令时为橙():
+    assert resolve([slot(SESSION_IDLE, bg=1)]) is Light.ORANGE
 
 
-def test_无任何会话时需要探测才能定夺():
-    assert resolve_without_probe([]) is None
+def test_全部空闲为绿():
+    assert resolve([slot(SESSION_IDLE)]) is Light.GREEN
 
 
-def test_探测命中为橙():
-    assert resolve([slot(SESSION_IDLE)], background_active=True) is Light.ORANGE
+def test_无任何会话为绿():
+    assert resolve([]) is Light.GREEN
 
 
-def test_探测未命中为绿():
-    assert resolve([slot(SESSION_IDLE)], background_active=False) is Light.GREEN
+def test_其他会话的后台任务也算数():
+    assert resolve([slot(SESSION_IDLE), slot(SESSION_IDLE, bg=1)]) is Light.ORANGE
 
 
-def test_探测结果不影响已定夺的灯色():
-    assert resolve([slot(SESSION_BUSY)], background_active=True) is Light.RED
+def test_后台总数合并三个来源():
+    assert slot(agents=2, tasks=1, bg=3).background_total == 6
 
 
 def test_摘要含会话数与后台数():
     slots = [slot(SESSION_BUSY), slot(SESSION_IDLE, agents=2)]
     text = summarize(slots, Light.RED)
     assert "忙碌" in text and "1 会话" in text and "后台 2" in text
+
+
+def test_摘要把后台命令计入总数():
+    text = summarize([slot(SESSION_IDLE, bg=2, agents=1)], Light.ORANGE)
+    assert "后台 3" in text
 
 
 def test_待机摘要不带多余计数():

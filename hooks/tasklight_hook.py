@@ -36,34 +36,35 @@ def handle(payload: dict, root: Path) -> None:
         store.mark_add(root, "agents", session_id, payload.get("agent_id", "unknown"))
     elif event == "SubagentStop":
         store.mark_remove(root, "agents", session_id, payload.get("agent_id", "unknown"))
+        _write_background_count(root, session_id, payload)
     elif event == "TaskCreated":
         store.mark_add(root, "tasks", session_id, payload.get("task_id", "unknown"))
     elif event == "TaskCompleted":
         store.mark_remove(root, "tasks", session_id, payload.get("task_id", "unknown"))
     elif event == "SessionEnd":
         store.drop_session(root, session_id)
-    elif event == "PostToolUse":
-        _note_background_bash(root, session_id, payload)
 
 
 def _write_state(root: Path, session_id: str, state: str, payload: dict) -> None:
     fields = {"state": state}
     if payload.get("cwd"):
         fields["cwd"] = payload["cwd"]
+    if "background_tasks" in payload:
+        fields["bg_count"] = _running_count(payload)
     store.write_slot(root, session_id, **fields)
 
 
-def _note_background_bash(root: Path, session_id: str, payload: dict) -> None:
-    if payload.get("tool_name") != "Bash":
+def _write_background_count(root: Path, session_id: str, payload: dict) -> None:
+    if "background_tasks" not in payload:
         return
-    tool_input = payload.get("tool_input") or {}
-    if not tool_input.get("run_in_background"):
-        return
-    # winproc 连带 ctypes，顶层 import 要 12ms，而只有这一个分支用得上。
-    from tasklight import winproc
+    store.write_slot(root, session_id, bg_count=_running_count(payload))
 
-    claude_pid = winproc.find_ancestor_pid(winproc.snapshot(), os.getpid(), "claude.exe")
-    store.write_slot(root, session_id, bg_since=time.time(), claude_pid=claude_pid)
+
+def _running_count(payload: dict) -> int:
+    """Stop / SubagentStop 的 payload 直接给出该会话的后台任务列表，
+    无需扫进程推断。缺少 status 字段的按运行中计。"""
+    tasks = payload.get("background_tasks") or []
+    return sum(1 for t in tasks if (t or {}).get("status", "running") == "running")
 
 
 def main() -> None:

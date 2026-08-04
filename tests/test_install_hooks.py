@@ -15,7 +15,8 @@ def test_空配置时装入全部事件():
     assert set(merged) == set(HOOK_ENTRIES)
 
 
-def test_保留他人已有的条目():
+def test_不碰他人已有的条目():
+    """TaskLight 不再挂 PostToolUse，别人挂在上面的 hook 应原样保留。"""
     existing = {
         "PostToolUse": [
             {
@@ -25,9 +26,19 @@ def test_保留他人已有的条目():
         ]
     }
     merged = merge_hooks(existing, HOOK_ENTRIES, COMMAND)
-    commands = [h["command"] for entry in merged["PostToolUse"] for h in entry["hooks"]]
+    assert merged["PostToolUse"] == existing["PostToolUse"]
+
+
+def test_与他人共用同一事件时追加而非替换():
+    existing = {"Stop": [{"hooks": [{"type": "command", "command": "python other.py"}]}]}
+    merged = merge_hooks(existing, HOOK_ENTRIES, COMMAND)
+    commands = [h["command"] for entry in merged["Stop"] for h in entry["hooks"]]
     assert "python other.py" in commands
     assert COMMAND in commands
+
+
+def test_不再挂载中频的PostToolUse():
+    assert "PostToolUse" not in HOOK_ENTRIES
 
 
 def test_重复执行不重复添加():

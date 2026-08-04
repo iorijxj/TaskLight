@@ -89,48 +89,76 @@ def test_会话结束清空槽位与标记(tmp_path):
     assert not (tmp_path / "agents" / "s1").exists()
 
 
-def test_后台bash记录时刻与pid(tmp_path):
-    handle({"hook_event_name": "SessionStart", "session_id": "s1"}, tmp_path)
-    before = time.time()
-    handle(
-        {
-            "hook_event_name": "PostToolUse",
-            "session_id": "s1",
-            "tool_name": "Bash",
-            "tool_input": {"command": "npm run build", "run_in_background": True},
-        },
-        tmp_path,
-    )
-    slot = only_slot(tmp_path)
-    assert slot.bg_since is not None and slot.bg_since >= before
-
-
-def test_前台bash不记录后台时刻(tmp_path):
+def test_stop带运行中后台任务时记数(tmp_path):
     handle({"hook_event_name": "SessionStart", "session_id": "s1"}, tmp_path)
     handle(
         {
-            "hook_event_name": "PostToolUse",
+            "hook_event_name": "Stop",
             "session_id": "s1",
-            "tool_name": "Bash",
-            "tool_input": {"command": "ls"},
+            "background_tasks": [
+                {"id": "b1", "status": "running"},
+                {"id": "b2", "status": "running"},
+            ],
         },
         tmp_path,
     )
-    assert only_slot(tmp_path).bg_since is None
+    assert only_slot(tmp_path).bg_count == 2
 
 
-def test_非bash工具直接忽略(tmp_path):
+def test_已完成的后台任务不计数(tmp_path):
+    handle(
+        {
+            "hook_event_name": "Stop",
+            "session_id": "s1",
+            "background_tasks": [
+                {"id": "b1", "status": "completed"},
+                {"id": "b2", "status": "running"},
+            ],
+        },
+        tmp_path,
+    )
+    assert only_slot(tmp_path).bg_count == 1
+
+
+def test_后台任务清空后归零(tmp_path):
+    handle(
+        {"hook_event_name": "Stop", "session_id": "s1", "background_tasks": [{"id": "b1"}]},
+        tmp_path,
+    )
+    assert only_slot(tmp_path).bg_count == 1
+    handle({"hook_event_name": "Stop", "session_id": "s1", "background_tasks": []}, tmp_path)
+    assert only_slot(tmp_path).bg_count == 0
+
+
+def test_缺status字段按运行中计(tmp_path):
+    handle(
+        {"hook_event_name": "Stop", "session_id": "s1", "background_tasks": [{"id": "b1"}]},
+        tmp_path,
+    )
+    assert only_slot(tmp_path).bg_count == 1
+
+
+def test_没有background_tasks字段时不动计数(tmp_path):
+    handle(
+        {"hook_event_name": "Stop", "session_id": "s1", "background_tasks": [{"id": "b1"}]},
+        tmp_path,
+    )
+    handle({"hook_event_name": "UserPromptSubmit", "session_id": "s1"}, tmp_path)
+    assert only_slot(tmp_path).bg_count == 1
+
+
+def test_子agent结束时也更新后台计数(tmp_path):
     handle({"hook_event_name": "SessionStart", "session_id": "s1"}, tmp_path)
     handle(
         {
-            "hook_event_name": "PostToolUse",
+            "hook_event_name": "SubagentStop",
             "session_id": "s1",
-            "tool_name": "Read",
-            "tool_input": {"run_in_background": True},
+            "agent_id": "a1",
+            "background_tasks": [{"id": "b1", "status": "running"}],
         },
         tmp_path,
     )
-    assert only_slot(tmp_path).bg_since is None
+    assert only_slot(tmp_path).bg_count == 1
 
 
 def test_未知事件被忽略(tmp_path):
@@ -187,25 +215,22 @@ def test_中文助手消息不影响状态落盘(tmp_path):
     assert slots[0].state == SESSION_IDLE
 
 
-def test_中文命令描述不影响后台标记(tmp_path):
-    """用后台命令，确保真正走到落盘路径 —— 前台 Bash 会提前 return，测不出编码问题。"""
+def test_中文后台任务描述不影响计数(tmp_path):
+    """background_tasks 里的 description 是中文，实测过它会触发编码崩溃。"""
     result = _run_hook_with_utf8(
         {
-            "hook_event_name": "PostToolUse",
+            "hook_event_name": "Stop",
             "session_id": "zh-3",
-            "tool_name": "Bash",
-            "tool_input": {
-                "command": "ping 127.0.0.1",
-                "description": "记录当前采样行数",
-                "run_in_background": True,
-            },
+            "background_tasks": [
+                {"id": "b1", "status": "running", "description": "起一个 5 分钟后台任务用于验证"}
+            ],
         },
         tmp_path,
     )
     assert result.returncode == 0
     slots = store.read_slots(tmp_path, now=time.time())
     assert len(slots) == 1
-    assert slots[0].bg_since is not None
+    assert slots[0].bg_count == 1
 
 
 def test_畸形输入脚本仍以0退出():

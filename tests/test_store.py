@@ -24,12 +24,16 @@ def test_写槽位后能读回(tmp_path):
 
 def test_二次写入合并而非覆盖(tmp_path):
     store.write_slot(tmp_path, "sess-1", state=SESSION_BUSY, cwd="E:\\p")
-    store.write_slot(tmp_path, "sess-1", bg_since=123.0, claude_pid=42)
+    store.write_slot(tmp_path, "sess-1", bg_count=2)
     slot = store.read_slots(tmp_path, now=time.time())[0]
     assert slot.cwd == "E:\\p"
     assert slot.state == SESSION_BUSY
-    assert slot.bg_since == 123.0
-    assert slot.claude_pid == 42
+    assert slot.bg_count == 2
+
+
+def test_缺bg_count字段时按零读(tmp_path):
+    store.write_slot(tmp_path, "sess-1", state=SESSION_BUSY)
+    assert store.read_slots(tmp_path, now=time.time())[0].bg_count == 0
 
 
 def test_陈旧槽位被丢弃(tmp_path):

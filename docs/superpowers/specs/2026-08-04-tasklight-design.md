@@ -37,6 +37,30 @@
 
 设计前对本机环境做了核查，三条结论直接决定了架构：
 
+### 2.0 【推翻前述方案】`Stop` payload 直接给出后台任务列表
+
+**这一条推翻了 2.1 / 2.2 的整套推断方案。** 实测 `Stop` 与 `SubagentStop` 的 payload 含 `background_tasks` 字段：
+
+```json
+"background_tasks": [
+  {"id": "bebxmpum0", "type": "shell", "status": "running",
+   "description": "起一个 5 分钟后台任务用于验证", "command": "..."}
+]
+```
+
+每会话独立（实测同一时刻，本会话为 `[{running}]`，另一会话为 `[]`），任务结束后的下一个 `Stop` 中该项消失。
+
+因此后台任务状态**不需要推断**：不扫进程树、不比对创建时间、不需要 `bg_since` / `claude_pid`、也不需要 `PostToolUse(Bash)` hook。下面 2.1 与 2.2 保留作为记录，说明为什么一度走了推断路线。
+
+**连带收益**：
+
+- 删掉 `probe.py` 整个模块与 `winproc` 的创建时间 / 父链查找逻辑
+- 消除唯一的中频 hook（`PostToolUse`），所有 hook 都是每轮一次的低频事件
+- 原「已知限制」中的两条（长任务+短任务误判、MCP 靠时间排除）自动消失
+- 判定从「推断」变为「事实」
+
+**残留依赖**：仍需 `winproc.snapshot()` 做「一个 `claude.exe` 都不在了就清空槽位」的崩溃兜底。
+
 ### 2.1 后台 Bash 完成时没有 hook 事件
 
 `run_in_background: true` 的 Bash 启动时触发 `PostToolUse`，**结束时不触发任何 hook**。官方曾有 [issue #45781](https://github.com/anthropics/claude-code/issues/45781) 请求 `BackgroundTasksIdle` 事件，已 closed as not planned。因此后台 Bash 的结束只能靠外部探测。

@@ -41,30 +41,27 @@ Claude Code hooks ──► ~\.claude\tasklight\sessions\<session_id>.json
                       悬浮窗 + 托盘图标
 ```
 
-hook 只挂每轮触发一次的低频事件（`UserPromptSubmit` / `Stop` / `Notification` / `SubagentStart|Stop` 等），刻意不用 `PreToolUse` —— Windows 上每个 hook 都要冷启动一个 Python 进程，挂在高频事件上会实打实拖慢 Claude Code。
+**全部 hook 都是每轮触发一次的低频事件**（`UserPromptSubmit` / `Stop` / `Notification` / `SubagentStart|Stop` 等），一个高频或中频 hook 都没有 —— Windows 上每个 hook 都要冷启动一个 Python 进程，挂在 `PreToolUse` 或 `PostToolUse` 上会实打实拖慢 Claude Code。
+
+后台任务的状态直接取自 `Stop` payload 里的 `background_tasks` 字段（Claude Code 给出的事实），不做任何推断。
 
 子 Agent 与 Task 的计数用「一个 ID 一个空文件」表示，而不是读-改-写一个共享 JSON —— 并行派多个 Agent 时 `SubagentStart` 会并发触发，读-改-写必然丢更新。
 
 ## 已知限制
 
-- **后台 Bash 是推断而非精确判定**。Claude Code 的后台 Bash 完成时不发任何 hook 事件（[issue #45781](https://github.com/anthropics/claude-code/issues/45781) 已 closed as not planned），只能靠「进程创建时间晚于该会话起后台命令的时刻」来识别。常驻 MCP 进程因创建时间更早而被排除
-- 同一会话先起长任务、再起短任务时，短任务结束后长任务仍在跑 —— 此时会误判为已完成而转绿（`bg_since` 只记最近一次）
-- 进程扫描按 2 秒节流，后台任务结束到转绿最长有 2.4 秒延迟
-- 仅支持 Windows（依赖 Win32 进程 API 与 tkinter 的 `-transparentcolor`）
+- 灯每 400ms 刷新一次；崩溃兜底（`claude.exe` 全没了就清空槽位）按 2 秒节流
+- 仅支持 Windows（依赖 Win32 进程 API）
 - 不监控 SSH / WSL 上的远程会话
 - **hook 侧永远不能引入第三方库** —— 命令行带 `-S` 跳过了 site-packages 扫描
+- 若 `SubagentStop` 漏触发，橙灯会多亮一会儿，靠 `SessionEnd` 或 4 小时超时兜底
 
 ## 性能
 
-hook 冷启动实测（Python 3.13.2）：
+hook 冷启动实测（Python 3.13.2）：约 **100ms**，其中 49ms 是 Python 解释器自身启动，无法再压。每轮对话触发两次（`UserPromptSubmit` + `Stop`）。
 
-| 场景 | 耗时 |
-|---|---|
-| `Stop` / `UserPromptSubmit` | ~101ms |
-| 前台 Bash（提前退出） | ~96ms |
-| 后台 Bash（含扫进程） | ~131ms |
+优化手段：命令行 `-S` 跳过 site 扫描（省 17ms）、延迟 import `shutil`（它连带 bz2/lzma，省 20ms）。
 
-其中约 49ms 是 Python 解释器自身启动，无法再压。GUI 侧每 400ms 一次轮询，每 2 秒一次进程扫描（446 个进程约 11ms）。
+GUI 侧每 400ms 一次轮询（读槽位约 1ms），每 2 秒一次进程快照（446 个进程约 11ms）。
 
 ## 开发
 
