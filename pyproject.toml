@@ -1,0 +1,11 @@
+[project]
+name = "tasklight"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = ["pystray>=0.19", "Pillow>=10"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
