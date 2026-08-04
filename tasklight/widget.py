@@ -1,94 +1,149 @@
-"""置顶悬浮窗。透明抠色实现圆角，左键拖拽移动。"""
+"""置顶悬浮窗：横置红绿灯，图片背景，左键拖动，边缘等比缩放，右键退出。"""
 from __future__ import annotations
 
 import tkinter as tk
 from collections.abc import Callable
 
-from .state import LIGHT_LABELS, Light
+from PIL import ImageTk
 
-WIDTH, HEIGHT = 56, 196
-RADIUS = 17
-CHROMA = "#ff00ff"
-PANEL = "#101010"
-TEXT_COLOR = "#d8d8d8"
+from . import assets
+from .state import Light
+
+DEFAULT_WIDTH = 340
+MIN_WIDTH = 180
+MAX_WIDTH = assets.BASE_WIDTH
+EDGE = 8
 BLINK_MS = 500
 MARGIN_RIGHT = 24
 
-BRIGHT = {"red": "#ff2a2a", "orange": "#ff9500", "green": "#22c55e"}
-DIM = {"red": "#3d0000", "orange": "#3d2400", "green": "#052616"}
-LIGHT_TO_LAMP = {
+LIGHT_TO_FRAME = {
     Light.RED_BLINK: "red",
     Light.RED: "red",
     Light.ORANGE: "orange",
     Light.GREEN: "green",
 }
-LAMP_ORDER = ("red", "orange", "green")
+EDGE_CURSORS = {
+    "e": "sb_h_double_arrow",
+    "w": "sb_h_double_arrow",
+    "n": "sb_v_double_arrow",
+    "s": "sb_v_double_arrow",
+    "se": "size_nw_se",
+    "nw": "size_nw_se",
+    "ne": "size_ne_sw",
+    "sw": "size_ne_sw",
+}
 
 
 class TrafficLightWidget:
     def __init__(self, root: tk.Tk, on_exit: Callable[[], None]):
         self._root = root
         self._on_exit = on_exit
+        self._frames = assets.build_frames()
+        self._ratio = assets.aspect_ratio()
         self._light = Light.GREEN
         self._blink_on = True
-        self._drag_origin = (0, 0)
+        self._width = DEFAULT_WIDTH
+        self._photo: ImageTk.PhotoImage | None = None
+        self._drag: dict | None = None
         self._build()
+
+    # ---------- 构建 ----------
 
     def _build(self) -> None:
         self._root.overrideredirect(True)
         self._root.attributes("-topmost", True)
-        self._root.attributes("-transparentcolor", CHROMA)
-        self._root.configure(bg=CHROMA)
+        self._root.configure(bg="black")
+        self._canvas = tk.Canvas(self._root, highlightthickness=0, bg="black", bd=0)
+        self._canvas.pack(fill="both", expand=True)
+        self._item = self._canvas.create_image(0, 0, anchor="nw")
         self._place_at_right_edge()
-
-        self._canvas = tk.Canvas(
-            self._root, width=WIDTH, height=HEIGHT, bg=CHROMA, highlightthickness=0
-        )
-        self._canvas.pack()
-        self._draw_panel()
-        self._lamps = {name: self._draw_lamp(i, name) for i, name in enumerate(LAMP_ORDER)}
-        self._label = self._canvas.create_text(
-            WIDTH // 2, HEIGHT - 18, text="", fill=TEXT_COLOR, font=("Microsoft YaHei UI", 8)
-        )
         self._bind_events()
         self.render(Light.GREEN)
 
+    def _height(self) -> int:
+        return round(self._width / self._ratio)
+
     def _place_at_right_edge(self) -> None:
-        screen_w = self._root.winfo_screenwidth()
-        screen_h = self._root.winfo_screenheight()
-        x = screen_w - WIDTH - MARGIN_RIGHT
-        y = (screen_h - HEIGHT) // 2
-        self._root.geometry(f"{WIDTH}x{HEIGHT}+{x}+{y}")
+        x = self._root.winfo_screenwidth() - self._width - MARGIN_RIGHT
+        y = (self._root.winfo_screenheight() - self._height()) // 2
+        self._apply_geometry(x, y)
 
-    def _draw_panel(self) -> None:
-        self._rounded_rect(0, 0, WIDTH, HEIGHT, 14, PANEL)
-
-    def _rounded_rect(self, x1, y1, x2, y2, r, color) -> None:
-        c = self._canvas
-        c.create_rectangle(x1 + r, y1, x2 - r, y2, fill=color, outline=color)
-        c.create_rectangle(x1, y1 + r, x2, y2 - r, fill=color, outline=color)
-        for cx, cy in ((x1, y1), (x2 - 2 * r, y1), (x1, y2 - 2 * r), (x2 - 2 * r, y2 - 2 * r)):
-            c.create_oval(cx, cy, cx + 2 * r, cy + 2 * r, fill=color, outline=color)
-
-    def _draw_lamp(self, index: int, name: str) -> int:
-        cx = WIDTH // 2
-        cy = 30 + index * 48
-        return self._canvas.create_oval(
-            cx - RADIUS, cy - RADIUS, cx + RADIUS, cy + RADIUS, fill=DIM[name], outline=""
-        )
+    def _apply_geometry(self, x: int, y: int) -> None:
+        self._root.geometry(f"{self._width}x{self._height()}+{x}+{y}")
+        self._canvas.configure(width=self._width, height=self._height())
 
     def _bind_events(self) -> None:
-        self._canvas.bind("<Button-1>", self._on_press)
-        self._canvas.bind("<B1-Motion>", self._on_drag)
-        self._canvas.bind("<Button-3>", lambda _e: self._on_exit())
+        c = self._canvas
+        c.bind("<Motion>", self._on_motion)
+        c.bind("<Button-1>", self._on_press)
+        c.bind("<B1-Motion>", self._on_drag_motion)
+        c.bind("<ButtonRelease-1>", self._on_release)
+        c.bind("<Button-3>", lambda _e: self._on_exit())
+
+    # ---------- 边缘检测与光标 ----------
+
+    def _edge_at(self, x: int, y: int) -> str:
+        vertical = "n" if y < EDGE else "s" if y >= self._height() - EDGE else ""
+        horizontal = "w" if x < EDGE else "e" if x >= self._width - EDGE else ""
+        return vertical + horizontal
+
+    def _on_motion(self, event) -> None:
+        edge = self._edge_at(event.x, event.y)
+        self._canvas.configure(cursor=EDGE_CURSORS.get(edge, "fleur"))
+
+    # ---------- 拖动与缩放 ----------
 
     def _on_press(self, event) -> None:
-        self._drag_origin = (event.x, event.y)
+        self._drag = {
+            "edge": self._edge_at(event.x, event.y),
+            "x": event.x_root,
+            "y": event.y_root,
+            "width": self._width,
+            "win_x": self._root.winfo_x(),
+            "win_y": self._root.winfo_y(),
+            "win_h": self._height(),
+        }
 
-    def _on_drag(self, event) -> None:
-        dx = event.x - self._drag_origin[0]
-        dy = event.y - self._drag_origin[1]
-        self._root.geometry(f"+{self._root.winfo_x() + dx}+{self._root.winfo_y() + dy}")
+    def _on_drag_motion(self, event) -> None:
+        if not self._drag:
+            return
+        dx = event.x_root - self._drag["x"]
+        dy = event.y_root - self._drag["y"]
+        if self._drag["edge"]:
+            self._resize_by(dx, dy)
+        else:
+            self._apply_geometry(self._drag["win_x"] + dx, self._drag["win_y"] + dy)
+
+    def _resize_by(self, dx: int, dy: int) -> None:
+        edge = self._drag["edge"]
+        delta = self._width_delta(edge, dx, dy)
+        width = max(MIN_WIDTH, min(MAX_WIDTH, self._drag["width"] + delta))
+        self._width = width
+        x, y = self._anchored_position(edge, width)
+        self._apply_geometry(x, y)
+        self._paint()
+
+    def _width_delta(self, edge: str, dx: int, dy: int) -> int:
+        if "e" in edge:
+            return dx
+        if "w" in edge:
+            return -dx
+        return round((dy if "s" in edge else -dy) * self._ratio)
+
+    def _anchored_position(self, edge: str, width: int) -> tuple[int, int]:
+        """缩放时固定对角，避免窗口一边缩一边跑。"""
+        height = round(width / self._ratio)
+        x, y = self._drag["win_x"], self._drag["win_y"]
+        if "w" in edge:
+            x = self._drag["win_x"] + self._drag["width"] - width
+        if "n" in edge:
+            y = self._drag["win_y"] + self._drag["win_h"] - height
+        return x, y
+
+    def _on_release(self, _event) -> None:
+        self._drag = None
+
+    # ---------- 渲染 ----------
 
     def render(self, light: Light) -> None:
         self._light = light
@@ -101,12 +156,11 @@ class TrafficLightWidget:
         self._paint()
 
     def _paint(self) -> None:
-        active = LIGHT_TO_LAMP[self._light]
         lit = self._blink_on or self._light is not Light.RED_BLINK
-        for name, item in self._lamps.items():
-            on = name == active and lit
-            self._canvas.itemconfigure(item, fill=BRIGHT[name] if on else DIM[name])
-        self._canvas.itemconfigure(self._label, text=LIGHT_LABELS[self._light])
+        name = LIGHT_TO_FRAME[self._light] if lit else assets.DARK_FRAME
+        frame = self._frames[name].resize((self._width, self._height()))
+        self._photo = ImageTk.PhotoImage(frame)
+        self._canvas.itemconfigure(self._item, image=self._photo)
 
     def show(self) -> None:
         self._root.deiconify()
