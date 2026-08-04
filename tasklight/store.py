@@ -1,0 +1,168 @@
+"""槽位目录读写。只用标准库 —— hook 进程要冷启动它。"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import time
+from pathlib import Path
+
+from .state import SESSION_IDLE, Slot
+
+DEFAULT_ROOT = Path.home() / ".claude" / "tasklight"
+STALE_SECONDS = 4 * 3600
+MARK_KINDS = ("agents", "tasks")
+
+_UNSAFE = re.compile(r"[^A-Za-z0-9_-]")
+
+
+def _rmtree(path: Path) -> None:
+    """按需引入 shutil：顶层 import 它要 20ms（连带 bz2/lzma），
+    而只有清理路径用得到 rmtree，hook 每次调用都付这笔钱不值。"""
+    import shutil
+
+    shutil.rmtree(path, ignore_errors=True)
+
+
+def sanitize_id(raw) -> str:
+    cleaned = _UNSAFE.sub("_", str(raw))[:128]
+    return cleaned or "unknown"
+
+
+WINDOW_FILE = "window.json"
+
+
+def save_window(root: Path, x: int, y: int, width: int) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / WINDOW_FILE
+    tmp = path.with_name(f"{WINDOW_FILE}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps({"x": x, "y": y, "width": width}), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def load_window(root: Path, screen: tuple[int, int]) -> dict | None:
+    """读回上次的位置与宽度。落在屏幕外或数据不合法时返回 None，由调用方用默认值。"""
+    data = _load_json(root / WINDOW_FILE)
+    if not data:
+        return None
+    try:
+        x, y, width = int(data["x"]), int(data["y"]), int(data["width"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    screen_w, screen_h = screen
+    if not (0 <= x < screen_w and 0 <= y < screen_h):
+        return None
+    return {"x": x, "y": y, "width": width}
+
+
+def _sessions_dir(root: Path) -> Path:
+    return root / "sessions"
+
+
+def _mark_dir(root: Path, kind: str, session_id: str) -> Path:
+    return root / kind / sanitize_id(session_id)
+
+
+def _load_json(path: Path) -> dict | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def write_slot(root: Path, session_id: str, **fields) -> None:
+    sid = sanitize_id(session_id)
+    path = _sessions_dir(root) / f"{sid}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    merged = {**(_load_json(path) or {}), **fields}
+    merged["session_id"] = sid
+    merged["updated_at"] = time.time()
+    tmp = path.with_name(f"{sid}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(merged, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def mark_add(root: Path, kind: str, session_id: str, item_id: str) -> None:
+    directory = _mark_dir(root, kind, session_id)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / sanitize_id(item_id)).touch()
+
+
+def mark_remove(root: Path, kind: str, session_id: str, item_id: str) -> None:
+    (_mark_dir(root, kind, session_id) / sanitize_id(item_id)).unlink(missing_ok=True)
+
+
+def drop_session(root: Path, session_id: str) -> None:
+    sid = sanitize_id(session_id)
+    (_sessions_dir(root) / f"{sid}.json").unlink(missing_ok=True)
+    for kind in MARK_KINDS:
+        _rmtree(_mark_dir(root, kind, sid))
+
+
+def clear_all(root: Path) -> None:
+    _rmtree(_sessions_dir(root))
+    for kind in MARK_KINDS:
+        _rmtree(root / kind)
+
+
+def _count_marks(root: Path, kind: str, session_id: str, now: float) -> int:
+    directory = _mark_dir(root, kind, session_id)
+    if not directory.is_dir():
+        return 0
+    fresh = 0
+    for item in directory.iterdir():
+        try:
+            if now - item.stat().st_mtime <= STALE_SECONDS:
+                fresh += 1
+        except OSError:
+            continue
+    return fresh
+
+
+def read_slots(root: Path, now: float) -> list[Slot]:
+    directory = _sessions_dir(root)
+    if not directory.is_dir():
+        return []
+    slots = []
+    for path in sorted(directory.glob("*.json")):
+        data = _load_json(path)
+        if not data:
+            continue
+        updated_at = float(data.get("updated_at") or 0.0)
+        if now - updated_at > STALE_SECONDS:
+            continue
+        sid = data.get("session_id") or path.stem
+        slots.append(
+            Slot(
+                session_id=sid,
+                state=data.get("state") or SESSION_IDLE,
+                cwd=data.get("cwd") or "",
+                bg_count=int(data.get("bg_count") or 0),
+                updated_at=updated_at,
+                pending_agents=_count_marks(root, "agents", sid, now),
+                pending_tasks=_count_marks(root, "tasks", sid, now),
+            )
+        )
+    return slots
+
+
+def prune_orphans(root: Path, now: float) -> None:
+    known = {s.session_id for s in read_slots(root, now)}
+    for kind in MARK_KINDS:
+        base = root / kind
+        if not base.is_dir():
+            continue
+        for directory in base.iterdir():
+            if directory.name not in known:
+                _rmtree(directory)
+                continue
+            _prune_stale_marks(directory, now)
+
+
+def _prune_stale_marks(directory: Path, now: float) -> None:
+    for item in directory.iterdir():
+        try:
+            if now - item.stat().st_mtime > STALE_SECONDS:
+                item.unlink(missing_ok=True)
+        except OSError:
+            continue

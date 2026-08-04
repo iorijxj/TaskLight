@@ -1,0 +1,51 @@
+"""系统托盘图标。pystray 在自己的线程跑消息循环，回调不直接碰 tkinter。"""
+from __future__ import annotations
+
+from collections.abc import Callable
+
+import pystray
+from PIL import Image, ImageDraw
+
+from .state import Light
+
+ICON_SIZE = 64
+DOT_INSET = 6
+ICON_COLORS = {
+    Light.RED_BLINK: "#ff2a2a",
+    Light.RED: "#ff2a2a",
+    Light.ORANGE: "#ff9500",
+    Light.GREEN: "#22c55e",
+}
+
+
+def _make_icon(light: Light) -> Image.Image:
+    image = Image.new("RGBA", (ICON_SIZE, ICON_SIZE), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    draw.ellipse(
+        (DOT_INSET, DOT_INSET, ICON_SIZE - DOT_INSET, ICON_SIZE - DOT_INSET),
+        fill=ICON_COLORS[light],
+    )
+    return image
+
+
+class TrayIcon:
+    def __init__(self, on_toggle: Callable[[], None], on_exit: Callable[[], None]):
+        menu = pystray.Menu(
+            pystray.MenuItem("显示/隐藏悬浮窗", lambda _i, _item: on_toggle(), default=True),
+            pystray.MenuItem("退出", lambda _i, _item: on_exit()),
+        )
+        self._icon = pystray.Icon("tasklight", _make_icon(Light.GREEN), "TaskLight", menu)
+        self._current: tuple[Light, str] | None = None
+
+    def start(self) -> None:
+        self._icon.run_detached()
+
+    def stop(self) -> None:
+        self._icon.stop()
+
+    def update(self, light: Light, tooltip: str) -> None:
+        if self._current == (light, tooltip):
+            return
+        self._current = (light, tooltip)
+        self._icon.icon = _make_icon(light)
+        self._icon.title = tooltip

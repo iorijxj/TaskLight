@@ -37,6 +37,30 @@
 
 设计前对本机环境做了核查，三条结论直接决定了架构：
 
+### 2.0 【推翻前述方案】`Stop` payload 直接给出后台任务列表
+
+**这一条推翻了 2.1 / 2.2 的整套推断方案。** 实测 `Stop` 与 `SubagentStop` 的 payload 含 `background_tasks` 字段：
+
+```json
+"background_tasks": [
+  {"id": "bebxmpum0", "type": "shell", "status": "running",
+   "description": "起一个 5 分钟后台任务用于验证", "command": "..."}
+]
+```
+
+每会话独立（实测同一时刻，本会话为 `[{running}]`，另一会话为 `[]`），任务结束后的下一个 `Stop` 中该项消失。
+
+因此后台任务状态**不需要推断**：不扫进程树、不比对创建时间、不需要 `bg_since` / `claude_pid`、也不需要 `PostToolUse(Bash)` hook。下面 2.1 与 2.2 保留作为记录，说明为什么一度走了推断路线。
+
+**连带收益**：
+
+- 删掉 `probe.py` 整个模块与 `winproc` 的创建时间 / 父链查找逻辑
+- 消除唯一的中频 hook（`PostToolUse`），所有 hook 都是每轮一次的低频事件
+- 原「已知限制」中的两条（长任务+短任务误判、MCP 靠时间排除）自动消失
+- 判定从「推断」变为「事实」
+
+**残留依赖**：仍需 `winproc.snapshot()` 做「一个 `claude.exe` 都不在了就清空槽位」的崩溃兜底。
+
 ### 2.1 后台 Bash 完成时没有 hook 事件
 
 `run_in_background: true` 的 Bash 启动时触发 `PostToolUse`，**结束时不触发任何 hook**。官方曾有 [issue #45781](https://github.com/anthropics/claude-code/issues/45781) 请求 `BackgroundTasksIdle` 事件，已 closed as not planned。因此后台 Bash 的结束只能靠外部探测。
@@ -156,7 +180,19 @@ PID 的解析方式：hook 从自身 `os.getpid()` 沿父进程链向上找，�
 
 唯一的中频 hook 是 `PostToolUse(Bash)`，脚本进去先看 `run_in_background`，不是就立刻退出。
 
-所有事件共用一个 `tasklight_hook.py`，只 import `os / sys / json`，不碰第三方库，冷启动约 50ms。
+所有事件共用一个 `tasklight_hook.py`，不碰第三方库。
+
+**冷启动实测（Python 3.13.2，本机）**：初版 155ms，远超最初 50ms 的估算 —— 其中 91ms 是解释器自身启动。三项优化后降到约 100ms：
+
+| 优化 | 收益 | 做法 |
+|---|---|---|
+| hook 命令加 `-S` | ~17ms | 跳过 site-packages 扫描。hook 只用标准库，且自行 `sys.path.insert` 项目根，故不依赖 site。**这也意味着 hook 侧永远不能引入第三方库** |
+| 延迟 import `shutil` | ~20ms | 它连带 `bz2`/`lzma`，而只有清理路径用得到 `rmtree` |
+| 延迟 import `winproc` | ~12ms | 它连带 `ctypes`，只有后台 Bash 分支用得上 |
+
+优化后：`Stop` / `UserPromptSubmit` 约 101ms，前台 Bash 96ms，后台 Bash 131ms（含扫进程）。
+
+还有约 15ms 可省（`dataclasses` + `enum`，需把三个 `SESSION_*` 常量拆进独立轻量模块），因收益递减未做。
 
 ### 3.5 灯色判定
 
