@@ -156,7 +156,19 @@ PID 的解析方式：hook 从自身 `os.getpid()` 沿父进程链向上找，�
 
 唯一的中频 hook 是 `PostToolUse(Bash)`，脚本进去先看 `run_in_background`，不是就立刻退出。
 
-所有事件共用一个 `tasklight_hook.py`，只 import `os / sys / json`，不碰第三方库，冷启动约 50ms。
+所有事件共用一个 `tasklight_hook.py`，不碰第三方库。
+
+**冷启动实测（Python 3.13.2，本机）**：初版 155ms，远超最初 50ms 的估算 —— 其中 91ms 是解释器自身启动。三项优化后降到约 100ms：
+
+| 优化 | 收益 | 做法 |
+|---|---|---|
+| hook 命令加 `-S` | ~17ms | 跳过 site-packages 扫描。hook 只用标准库，且自行 `sys.path.insert` 项目根，故不依赖 site。**这也意味着 hook 侧永远不能引入第三方库** |
+| 延迟 import `shutil` | ~20ms | 它连带 `bz2`/`lzma`，而只有清理路径用得到 `rmtree` |
+| 延迟 import `winproc` | ~12ms | 它连带 `ctypes`，只有后台 Bash 分支用得上 |
+
+优化后：`Stop` / `UserPromptSubmit` 约 101ms，前台 Bash 96ms，后台 Bash 131ms（含扫进程）。
+
+还有约 15ms 可省（`dataclasses` + `enum`，需把三个 `SESSION_*` 常量拆进独立轻量模块），因收益递减未做。
 
 ### 3.5 灯色判定
 

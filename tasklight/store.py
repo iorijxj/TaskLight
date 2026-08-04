@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import time
 from pathlib import Path
 
@@ -15,6 +14,14 @@ STALE_SECONDS = 4 * 3600
 MARK_KINDS = ("agents", "tasks")
 
 _UNSAFE = re.compile(r"[^A-Za-z0-9_-]")
+
+
+def _rmtree(path: Path) -> None:
+    """按需引入 shutil：顶层 import 它要 20ms（连带 bz2/lzma），
+    而只有清理路径用得到 rmtree，hook 每次调用都付这笔钱不值。"""
+    import shutil
+
+    shutil.rmtree(path, ignore_errors=True)
 
 
 def sanitize_id(raw) -> str:
@@ -63,13 +70,13 @@ def drop_session(root: Path, session_id: str) -> None:
     sid = sanitize_id(session_id)
     (_sessions_dir(root) / f"{sid}.json").unlink(missing_ok=True)
     for kind in MARK_KINDS:
-        shutil.rmtree(_mark_dir(root, kind, sid), ignore_errors=True)
+        _rmtree(_mark_dir(root, kind, sid))
 
 
 def clear_all(root: Path) -> None:
-    shutil.rmtree(_sessions_dir(root), ignore_errors=True)
+    _rmtree(_sessions_dir(root))
     for kind in MARK_KINDS:
-        shutil.rmtree(root / kind, ignore_errors=True)
+        _rmtree(root / kind)
 
 
 def _count_marks(root: Path, kind: str, session_id: str, now: float) -> int:
@@ -122,7 +129,7 @@ def prune_orphans(root: Path, now: float) -> None:
             continue
         for directory in base.iterdir():
             if directory.name not in known:
-                shutil.rmtree(directory, ignore_errors=True)
+                _rmtree(directory)
                 continue
             _prune_stale_marks(directory, now)
 
