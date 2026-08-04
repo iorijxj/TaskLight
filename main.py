@@ -15,7 +15,9 @@ from tasklight.winproc import any_claude_alive, claim_single_instance, snapshot
 
 TICK_MS = 400
 SCAN_INTERVAL = 2.0
-INSTANCE_MUTEX = "Global\\TaskLight.SingleInstance"
+# Local\ 而非 Global\：单实例是「每个登录会话一个」的语义。用 Global\ 会让
+# 多用户同时登录时第二个用户启动不了，也让任何低权限进程能抢占这个名字。
+INSTANCE_MUTEX = "Local\\TaskLight.SingleInstance"
 
 
 class App:

@@ -158,3 +158,11 @@ def test_卸载移除自身条目但保留他人(tmp_path):
     assert "SessionStart" not in data["hooks"]
     remaining = [h["command"] for e in data["hooks"]["PostToolUse"] for h in e["hooks"]]
     assert remaining == ["python other.py"]
+
+
+def test_写入是原子的不残留临时文件(tmp_path):
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({}), encoding="utf-8")
+    install(settings, tmp_path / "hooks" / "tasklight_hook.py")
+    assert list(tmp_path.glob("*.tmp")) == []
+    assert json.loads(settings.read_text(encoding="utf-8"))["hooks"]

@@ -42,6 +42,10 @@ class _BITMAPINFO(ctypes.Structure):
     _fields_ = [("bmiHeader", _BITMAPINFOHEADER), ("bmiColors", wintypes.DWORD * 3)]
 
 
+_user32 = ctypes.windll.user32
+_gdi32 = ctypes.windll.gdi32
+
+
 class _BLENDFUNCTION(ctypes.Structure):
     _fields_ = [
         ("BlendOp", ctypes.c_byte),
@@ -51,16 +55,64 @@ class _BLENDFUNCTION(ctypes.Structure):
     ]
 
 
+def _declare_signatures() -> None:
+    """显式声明句柄类型。
+
+    ctypes 默认按 c_int（32 位）收发，而 64 位 Windows 的句柄是 64 位指针。
+    必须成套声明 —— 只给一半函数加 restype，另一半仍按 32 位收参数，会直接
+    抛 OverflowError，比不加更糟。
+    """
+    point_p = ctypes.POINTER(wintypes.POINT)
+    _user32.GetParent.restype = wintypes.HWND
+    _user32.GetParent.argtypes = [wintypes.HWND]
+    _user32.GetWindowLongW.restype = wintypes.LONG
+    _user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+    _user32.SetWindowLongW.restype = wintypes.LONG
+    _user32.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.LONG]
+    _user32.GetDC.restype = wintypes.HDC
+    _user32.GetDC.argtypes = [wintypes.HWND]
+    _user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+    _user32.UpdateLayeredWindow.restype = wintypes.BOOL
+    _user32.UpdateLayeredWindow.argtypes = [
+        wintypes.HWND,
+        wintypes.HDC,
+        point_p,
+        ctypes.POINTER(wintypes.SIZE),
+        wintypes.HDC,
+        point_p,
+        wintypes.COLORREF,
+        ctypes.POINTER(_BLENDFUNCTION),
+        wintypes.DWORD,
+    ]
+    _gdi32.CreateCompatibleDC.restype = wintypes.HDC
+    _gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+    _gdi32.CreateDIBSection.restype = wintypes.HBITMAP
+    _gdi32.CreateDIBSection.argtypes = [
+        wintypes.HDC,
+        ctypes.POINTER(_BITMAPINFO),
+        wintypes.UINT,
+        ctypes.POINTER(ctypes.c_void_p),
+        wintypes.HANDLE,
+        wintypes.DWORD,
+    ]
+    _gdi32.SelectObject.restype = wintypes.HGDIOBJ
+    _gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+    _gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+    _gdi32.DeleteDC.argtypes = [wintypes.HDC]
+
+
+_declare_signatures()
+
+
 def resolve_hwnd(widget_id: int) -> int:
     """tkinter 的 winfo_id 在有窗口装饰时返回子窗口，取其顶层父窗口。"""
-    parent = ctypes.windll.user32.GetParent(widget_id)
+    parent = _user32.GetParent(widget_id)
     return parent or widget_id
 
 
 def enable(hwnd: int) -> None:
-    user32 = ctypes.windll.user32
-    style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-    user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED)
+    style = _user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+    _user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED)
 
 
 def _premultiplied_bgra(image: Image.Image) -> bytes:
@@ -91,7 +143,7 @@ def paint(hwnd: int, image: Image.Image) -> bool:
 
 
 def _paint(hwnd: int, image: Image.Image) -> bool:
-    user32, gdi32 = ctypes.windll.user32, ctypes.windll.gdi32
+    user32, gdi32 = _user32, _gdi32
     width, height = image.size
     data = _premultiplied_bgra(image)
 

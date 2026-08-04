@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -95,6 +96,11 @@ def _load(path: Path) -> dict:
 
 
 def _apply(settings_path: Path, new_hooks: dict) -> bool:
+    """原子写：写临时文件再 os.replace。
+
+    这里改的是 Claude Code 的全局配置，写到一半崩溃会让它整个起不来 ——
+    非原子写在这个文件上的代价太大。
+    """
     settings = _load(settings_path)
     if new_hooks == settings.get("hooks", {}):
         return False
@@ -102,9 +108,9 @@ def _apply(settings_path: Path, new_hooks: dict) -> bool:
         shutil.copy2(settings_path, settings_path.with_suffix(".json.bak"))
     settings["hooks"] = new_hooks
     settings_path.parent.mkdir(parents=True, exist_ok=True)
-    settings_path.write_text(
-        json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    tmp = settings_path.with_name(f"{settings_path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, settings_path)
     return True
 
 
