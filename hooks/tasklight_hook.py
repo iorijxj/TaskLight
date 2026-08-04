@@ -67,8 +67,13 @@ def _note_background_bash(root: Path, session_id: str, payload: dict) -> None:
 
 
 def main() -> None:
-    payload = json.loads(sys.stdin.read())
-    handle(payload, store.DEFAULT_ROOT)
+    # 必须从 buffer 读原始字节自行按 UTF-8 解码：sys.stdin.read() 在 Windows 上
+    # 会用 locale 编码（cp936）去解 UTF-8 的 payload，遇到解不了的字节就产生
+    # surrogate 字符，写槽位时抛 UnicodeEncodeError —— 实测会让所有含中文的
+    # 事件静默丢失，红绿灯彻底失灵。
+    raw = sys.stdin.buffer.read().decode("utf-8", errors="replace")
+    root = Path(os.environ.get("TASKLIGHT_ROOT") or store.DEFAULT_ROOT)
+    handle(json.loads(raw), root)
 
 
 if __name__ == "__main__":
