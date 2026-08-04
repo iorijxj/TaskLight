@@ -1,85 +1,84 @@
 # TaskLight 🚦
 
-Windows 桌面红绿灯，余光一扫就知道 Claude Code 在忙什么。聚合所有会话（CLI + VS Code 扩展），全局一盏灯。
+Windows 桌面红绿灯，余光一扫就知道 Claude Code 在忙什么。
 
-## 灯态
+不用切窗口、不用盯屏幕 —— 它把「Claude 卡住在等你批准」和「其实早跑完了」这两件最耗时间的事，变成桌面角落一盏灯。**聚合所有会话**：几个 CLI 窗口加 VS Code 扩展，汇总成一盏。
 
 | 灯 | 含义 | 默认表现 |
 |---|---|---|
-| 🔴🟠 红+橙 | Claude 停下来等你批准权限 —— 不回去它就一直卡着 | **快闪 250ms** |
-| 🔴 红 | Claude 正在干活，可以走开 | 慢闪 600ms |
-| 🟠 橙 | 前台都停了，但后台子 Agent / Task / Bash 还在跑 | 慢闪 600ms |
+| 🔴🟠 红+橙 | Claude 停下来等你**批准权限** —— 不回去它就一直卡着 | **快闪** |
+| 🔴 红 | Claude 正在干活，可以走开 | 慢闪 |
+| 🟠 橙 | 前台都停了，但后台子 Agent / Task / Bash 还在跑 | 慢闪 |
 | 🟢 绿 | 全部完成，待机 | 常亮 |
 
-多个窗口时按优先级聚合：任一会话等你批准就红+橙，任一会话在干活就红，全停下但还有后台活就橙，彻底空了才绿。
+多窗口时按优先级聚合，取最紧急的那个。闪烁节奏和规则可在**托盘右键 → 设置**里改。
 
-闪烁节奏和「哪些状态闪」都可在**托盘右键 → 设置**里改。等待确认那档刻意不给关 —— 它是唯一「不回去就一直卡着」的状态。
+## 快速上手
 
-## 安装
-
-```bash
+```powershell
 python -m pip install -e .
 python install_hooks.py
 ```
 
-`install_hooks.py` 会把 hooks 幂等合并进 `~\.claude\settings.json`（自动备份 `.bak`，不动你已有的条目）。**重启 Claude Code** 后生效。
-
-然后双击 `start.cmd` 启动红绿灯。
+然后**重启 Claude Code**（hook 在会话启动时加载，这步不能省），双击 `start.cmd`。
 
 | 操作 | 效果 |
 |---|---|
-| 灯上左键拖动 | 移动位置 |
-| 拖边缘或四角 | 等比缩放（宽度 180–960） |
-| 托盘图标左键 | 显示 / 隐藏悬浮窗 |
-| 托盘图标右键 → 设置 | 调闪烁节奏与规则，改完即时生效 |
-| **托盘图标右键 → 退出** | **唯一的退出入口** |
+| 灯上左键拖动 | 移动 |
+| 拖边缘或四角 | 等比缩放 |
+| 托盘左键 | 显示 / 隐藏 |
+| 托盘右键 → 设置 | 调闪烁节奏与规则 |
+| 托盘右键 → 退出 | 唯一的退出入口 |
 
-位置和尺寸会记住，下次启动照旧。悬浮窗本身刻意不响应右键 —— 免得在灯上误点一下就把它关了。重复双击 `start.cmd` 不会起出第二个实例。
+位置尺寸会记住。悬浮窗刻意不响应右键，免得误点关掉。
 
-## 卸载
+**卸载**：`python install_hooks.py --uninstall`，再删 `~\.claude\tasklight\`。
 
-```bash
-python install_hooks.py --uninstall
-```
-
-再删掉 `~\.claude\tasklight\` 目录即可。
+> 📖 详细说明、设置项、故障排查见 **[使用文档](docs/USAGE.md)**
 
 ## 工作原理
 
 ```
-Claude Code hooks ──► ~\.claude\tasklight\sessions\<session_id>.json
-                             │
-                             ▼  每 400ms 轮询聚合
-                      悬浮窗 + 托盘图标
+Claude Code hooks ──写──► ~\.claude\tasklight\sessions\<session_id>.json
+                                      │
+                                      ▼  每 400ms 读取并聚合
+                              悬浮窗 + 托盘图标
 ```
 
-**全部 hook 都是每轮触发一次的低频事件**（`UserPromptSubmit` / `Stop` / `Notification` / `SubagentStart|Stop` 等），一个高频或中频 hook 都没有 —— Windows 上每个 hook 都要冷启动一个 Python 进程，挂在 `PreToolUse` 或 `PostToolUse` 上会实打实拖慢 Claude Code。
+三个关键设计：
 
-后台任务的状态直接取自 `Stop` payload 里的 `background_tasks` 字段（Claude Code 给出的事实），不做任何推断。
+**全部用低频 hook。** 挂的 10 个事件都是每轮对话触发一次的，刻意不用 `PreToolUse`/`PostToolUse` —— Windows 上每次 hook 都要冷启动一个 Python 进程（约 100ms），挂在高频事件上会实打实拖慢 Claude Code。
 
-子 Agent 与 Task 的计数用「一个 ID 一个空文件」表示，而不是读-改-写一个共享 JSON —— 并行派多个 Agent 时 `SubagentStart` 会并发触发，读-改-写必然丢更新。
+**后台任务不靠推断。** `Stop` 的 payload 直接带 `background_tasks` 列表，是 Claude Code 给出的事实，不用扫进程树去猜。
 
-## 已知限制
+**子 Agent 计数用「一个 ID 一个空文件」。** 并行派多个 Agent 时 `SubagentStart` 会并发触发，读-改-写同一个 JSON 必然丢更新；一个 Agent 一个空文件则天然无竞争、不用加锁。
 
-- 灯每 400ms 刷新一次；崩溃兜底（`claude.exe` 全没了就清空槽位）按 2 秒节流
-- 仅支持 Windows（依赖 Win32 进程 API）
-- 不监控 SSH / WSL 上的远程会话
-- **hook 侧永远不能引入第三方库** —— 命令行带 `-S` 跳过了 site-packages 扫描
-- 若 `SubagentStop` 漏触发，橙灯会多亮一会儿，靠 `SessionEnd` 或 4 小时超时兜底
+## 项目结构
 
-## 性能
-
-hook 冷启动实测（Python 3.13.2）：约 **100ms**，其中 49ms 是 Python 解释器自身启动，无法再压。每轮对话触发两次（`UserPromptSubmit` + `Stop`）。
-
-优化手段：命令行 `-S` 跳过 site 扫描（省 17ms）、延迟 import `shutil`（它连带 bz2/lzma，省 20ms）。
-
-GUI 侧每 400ms 一次轮询（读槽位约 1ms），每 2 秒一次进程快照（446 个进程约 11ms）。
+```
+tasklight/
+├── state.py       灯色判定（纯函数，零 I/O）
+├── store.py       槽位读写、陈旧清理、窗口位置
+├── config.py      闪烁配置
+├── assets.py      灯态图加载与红+橙合成
+├── layered.py     Win32 分层窗口逐像素 alpha 绘制
+├── widget.py      悬浮窗：拖动、缩放、闪烁引擎
+├── settings_window.py  设置界面
+├── tray.py        托盘图标
+└── winproc.py     进程快照、单实例互斥
+hooks/tasklight_hook.py   10 个事件的分派入口
+install_hooks.py          幂等安装 / 卸载
+```
 
 ## 开发
 
-```bash
-python -m pytest -v                 # 全部测试
+```powershell
+python -m pytest -q                 # 103 项测试
 python scripts/preview_widget.py    # 手动预览四种灯态
 ```
 
-设计文档见 `docs/superpowers/specs/`，实现计划见 `docs/superpowers/plans/`。
+设计文档见 `docs/superpowers/specs/`，hook payload 实测结论见 `docs/hook-payload-findings.md`。
+
+## 环境要求
+
+Windows 10/11 · Python 3.13+（需 tkinter）· 依赖 `pystray` + `Pillow`（仅界面侧，hook 只用标准库）
