@@ -4,9 +4,7 @@ from __future__ import annotations
 import tkinter as tk
 from collections.abc import Callable
 
-from PIL import ImageTk
-
-from . import assets
+from . import assets, layered
 from .state import Light
 
 DEFAULT_WIDTH = 340
@@ -43,8 +41,8 @@ class TrafficLightWidget:
         self._light = Light.GREEN
         self._blink_on = True
         self._width = DEFAULT_WIDTH
-        self._photo: ImageTk.PhotoImage | None = None
         self._drag: dict | None = None
+        self._hwnd = 0
         self._build()
 
     # ---------- 构建 ----------
@@ -52,11 +50,10 @@ class TrafficLightWidget:
     def _build(self) -> None:
         self._root.overrideredirect(True)
         self._root.attributes("-topmost", True)
-        self._root.configure(bg="black")
-        self._canvas = tk.Canvas(self._root, highlightthickness=0, bg="black", bd=0)
-        self._canvas.pack(fill="both", expand=True)
-        self._item = self._canvas.create_image(0, 0, anchor="nw")
         self._place_at_right_edge()
+        self._root.update_idletasks()
+        self._hwnd = layered.resolve_hwnd(self._root.winfo_id())
+        layered.enable(self._hwnd)
         self._bind_events()
         self.render(Light.GREEN)
 
@@ -70,15 +67,14 @@ class TrafficLightWidget:
 
     def _apply_geometry(self, x: int, y: int) -> None:
         self._root.geometry(f"{self._width}x{self._height()}+{x}+{y}")
-        self._canvas.configure(width=self._width, height=self._height())
 
     def _bind_events(self) -> None:
-        c = self._canvas
-        c.bind("<Motion>", self._on_motion)
-        c.bind("<Button-1>", self._on_press)
-        c.bind("<B1-Motion>", self._on_drag_motion)
-        c.bind("<ButtonRelease-1>", self._on_release)
-        c.bind("<Button-3>", lambda _e: self._on_exit())
+        root = self._root
+        root.bind("<Motion>", self._on_motion)
+        root.bind("<Button-1>", self._on_press)
+        root.bind("<B1-Motion>", self._on_drag_motion)
+        root.bind("<ButtonRelease-1>", self._on_release)
+        root.bind("<Button-3>", lambda _e: self._on_exit())
 
     # ---------- 边缘检测与光标 ----------
 
@@ -89,7 +85,7 @@ class TrafficLightWidget:
 
     def _on_motion(self, event) -> None:
         edge = self._edge_at(event.x, event.y)
-        self._canvas.configure(cursor=EDGE_CURSORS.get(edge, "fleur"))
+        self._root.configure(cursor=EDGE_CURSORS.get(edge, "fleur"))
 
     # ---------- 拖动与缩放 ----------
 
@@ -156,14 +152,16 @@ class TrafficLightWidget:
         self._paint()
 
     def _paint(self) -> None:
+        if not self._hwnd:
+            return
         lit = self._blink_on or self._light is not Light.RED_BLINK
         name = LIGHT_TO_FRAME[self._light] if lit else assets.DARK_FRAME
         frame = self._frames[name].resize((self._width, self._height()))
-        self._photo = ImageTk.PhotoImage(frame)
-        self._canvas.itemconfigure(self._item, image=self._photo)
+        layered.paint(self._hwnd, frame)
 
     def show(self) -> None:
         self._root.deiconify()
+        self._paint()
 
     def hide(self) -> None:
         self._root.withdraw()
